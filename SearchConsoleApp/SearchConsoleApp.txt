@@ -1,0 +1,279 @@
+using SearchConsoleApp;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        ISearchEngine searchEngine = new InvertedIndex();
+        IDocumentIndexer documentIndexer = new DocumentIndexer();
+        documentIndexer.IndexDocuments(searchEngine);
+
+        var searchConsole = new SearchConsole(searchEngine);
+        searchConsole.Run();
+    }
+}
+
+namespace SearchConsoleApp
+{
+    public class SearchConsole
+    {
+        private readonly ISearchEngine _searchEngine;
+
+        public SearchConsole(ISearchEngine searchEngine)
+        {
+            _searchEngine = searchEngine;
+        }
+
+        public void Run()
+        {
+            _searchEngine.PrintIndexedDocuments();
+            while (true)
+            {
+                Console.WriteLine("\nEnter search term (type 'exit' to quit):");
+                string? term = Console.ReadLine();
+
+                if (string.IsNullOrEmpty(term))
+                {
+                    Console.WriteLine("Error: Invalid input. Exiting...");
+                    break;
+                }
+
+                if (term.ToLower() == "exit")
+                {
+                    Console.WriteLine("Exiting...");
+                    break;
+                }
+
+                List<string> results = _searchEngine.Search(term);
+                if (results.Any())
+                {
+                    Console.WriteLine("Matching documents:");
+                    foreach (var doc in results)
+                    {
+                        Console.WriteLine(doc);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("No matching documents found.");
+                }
+            }
+        }
+    }
+}
+
+namespace SearchConsoleApp
+{
+    public interface ISearchEngine
+    {
+        void IndexDocument(string document);
+        List<string> Search(string term);
+        void PrintIndexedDocuments();
+    }
+}
+
+namespace SearchConsoleApp
+{
+    public class InvertedIndex : ISearchEngine
+    {
+        private readonly Dictionary<string, List<string>> _index;
+
+        public InvertedIndex()
+        {
+            _index = new Dictionary<string, List<string>>();
+        }
+
+        public void IndexDocument(string document)
+        {
+            try
+            {
+                var words = document.Split(new char[] { ' ', ',', '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var word in words)
+                {
+                    var cleanedWord = RemoveStopWords(Stem(word.ToLower()));
+                    if (!_index.ContainsKey(cleanedWord))
+                    {
+                        _index[cleanedWord] = new List<string>();
+                    }
+                    _index[cleanedWord].Add(document);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error indexing document: {ex.Message}");
+            }
+        }
+
+        public List<string> Search(string term)
+        {
+            try
+            {
+                var cleanedTerm = RemoveStopWords(Stem(term.ToLower()));
+                if (_index.ContainsKey(cleanedTerm))
+                {
+                    var documents = _index[cleanedTerm];
+                    var tfidfDictionary = new Dictionary<string, double>();
+                    foreach (var doc in documents)
+                    {
+                        var words = doc.Split(new char[] { ' ', ',', '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+                        var tf = (double)words.Count(w => w.Equals(cleanedTerm, StringComparison.OrdinalIgnoreCase)) / words.Length;
+                        var idf = Math.Log(_index.Count / (double)_index[cleanedTerm].Count);
+                        var tfidf = tf * idf;
+                        tfidfDictionary[doc] = tfidf;
+                    }
+                    return tfidfDictionary.OrderByDescending(pair => pair.Value).Select(pair => pair.Key).ToList();
+                }
+                else
+                {
+                    return new List<string>();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error searching term: {ex.Message}");
+                return new List<string>();
+            }
+        }
+
+        public void PrintIndexedDocuments()
+        {
+            Console.WriteLine("The following documents are indexed:");
+            int index = 1;
+            var printedDocuments = new HashSet<string>();
+            foreach (var (word, documents) in _index)
+            {
+                foreach (var document in documents)
+                {
+                    if (!printedDocuments.Contains(document))
+                    {
+                        Console.WriteLine($"Document {index}: \"{document}\"");
+                        printedDocuments.Add(document);
+                        index++;
+                    }
+                }
+            }
+        }
+
+        private string Stem(string word)
+        {
+            // Basic stemming: Remove common word endings
+            if (word.EndsWith("es") || word.EndsWith("ed"))
+            {
+                return word.Substring(0, word.Length - 2);
+            }
+            return word;
+        }
+
+        private string RemoveStopWords(string word)
+        {
+            // Basic stop words removal
+            var stopWords = new HashSet<string> { "the", "and", "or", "in", "on", "of", "with" };
+            if (stopWords.Contains(word))
+            {
+                return "";
+            }
+            return word;
+        }
+    }
+}
+
+namespace SearchConsoleApp
+{
+    public interface IDocumentIndexer
+    {
+        void IndexDocuments(ISearchEngine searchEngine);
+    }
+}
+
+namespace SearchConsoleApp
+{
+    public class DocumentIndexer : IDocumentIndexer
+    {
+        public void IndexDocuments(ISearchEngine searchEngine)
+        {
+            searchEngine.IndexDocument("the brown fox jumped over the brown dog");
+            searchEngine.IndexDocument("the lazy brown dog sat in the corner");
+            searchEngine.IndexDocument("the red fox bit the lazy dog");
+        }
+    }
+}
+
+using AutoFixture;
+using AutoFixture.Xunit2;
+using Moq;
+using SearchConsoleApp;
+using Xunit;
+
+namespace Test
+{
+    public class InvertedIndexTests
+    {
+        [Theory]
+        [AutoData]
+        public void WHEN_Search_ForBrown_RETURNS_Documents_With_RightIndex(
+            [Frozen] Mock<IDocumentIndexer> documentIndexerMock,
+            InvertedIndex invertedIndex, DocumentIndexer documentIndexer)
+        {
+            // Arrange
+            var fixture = new Fixture();
+            documentIndexerMock.Setup(d => d.IndexDocuments(It.IsAny<ISearchEngine>())).Callback<ISearchEngine>(engine =>
+            {
+                documentIndexer.IndexDocuments(engine);
+            });
+            documentIndexerMock.Object.IndexDocuments(invertedIndex);
+            string term = "brown";
+
+            // Act
+            var result = invertedIndex.Search(term);
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.Equal(2, result.Count);
+            Assert.Equal("the brown fox jumped over the brown dog", result[0]);
+            Assert.Equal("the lazy brown dog sat in the corner", result[1]);
+        }
+
+        [Theory]
+        [AutoData]
+        public void WHEN_Search_ForFox_RETURNS_Documents_With_RightIndex(
+            [Frozen] Mock<IDocumentIndexer> documentIndexerMock,
+            InvertedIndex invertedIndex, DocumentIndexer documentIndexer)
+        {
+            // Arrange
+            var fixture = new Fixture();
+            documentIndexerMock.Setup(d => d.IndexDocuments(It.IsAny<ISearchEngine>())).Callback<ISearchEngine>(engine =>
+            {
+                documentIndexer.IndexDocuments(engine);
+            });
+            documentIndexerMock.Object.IndexDocuments(invertedIndex);
+            string term = "fox";
+
+            // Act
+            var result = invertedIndex.Search(term);
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.Equal(2, result.Count);
+            Assert.Equal("the red fox bit the lazy dog", result[0]);
+            Assert.Equal("the brown fox jumped over the brown dog", result[1]);
+        }
+    }
+}
+
+
+using AutoFixture;
+using AutoFixture.AutoMoq;
+using AutoFixture.Xunit2;
+
+namespace Test
+{
+    public class AutoMoqDataAttribute : AutoDataAttribute
+    {
+        public AutoMoqDataAttribute() : base(() => new Fixture().Customize(new AutoMoqCustomization()))
+        {
+        }
+    }
+}
+
+
+
