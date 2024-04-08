@@ -1,47 +1,104 @@
 ﻿namespace SearchConsoleApp
 {
-    public class InvertedIndex
+    public class InvertedIndex : ISearchEngine
     {
-        private Dictionary<string, List<string>> index;
+        private readonly Dictionary<string, List<string>> _index;
 
         public InvertedIndex()
         {
-            index = new Dictionary<string, List<string>>();
+            _index = new Dictionary<string, List<string>>();
         }
 
         public void IndexDocument(string document)
         {
-            var words = document.Split(new char[] { ' ', ',', '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var word in words)
+            try
             {
-                if (!index.ContainsKey(word))
+                var words = document.Split(new char[] { ' ', ',', '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var word in words)
                 {
-                    index[word] = new List<string>();
+                    var cleanedWord = RemoveStopWords(Stem(word.ToLower()));
+                    if (!_index.ContainsKey(cleanedWord))
+                    {
+                        _index[cleanedWord] = new List<string>();
+                    }
+                    _index[cleanedWord].Add(document);
                 }
-                index[word].Add(document);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error indexing document: {ex.Message}");
             }
         }
 
         public List<string> Search(string term)
         {
-            if (index.ContainsKey(term))
+            try
             {
-                var documents = index[term];
-                var tfidfDictionary = new Dictionary<string, double>();
-                foreach (var doc in documents)
+                var cleanedTerm = RemoveStopWords(Stem(term.ToLower()));
+                if (_index.ContainsKey(cleanedTerm))
                 {
-                    var words = doc.Split(new char[] { ' ', ',', '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
-                    var tf = (double)words.Count(w => w.Equals(term, StringComparison.OrdinalIgnoreCase)) / words.Length;
-                    var idf = Math.Log(index.Count / (double)index[term].Count);
-                    var tfidf = tf * idf;
-                    tfidfDictionary[doc] = tfidf;
+                    var documents = _index[cleanedTerm];
+                    var tfidfDictionary = new Dictionary<string, double>();
+                    foreach (var doc in documents)
+                    {
+                        var words = doc.Split(new char[] { ' ', ',', '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+                        var tf = (double)words.Count(w => w.Equals(cleanedTerm, StringComparison.OrdinalIgnoreCase)) / words.Length;
+                        var idf = Math.Log(_index.Count / (double)_index[cleanedTerm].Count);
+                        var tfidf = tf * idf;
+                        tfidfDictionary[doc] = tfidf;
+                    }
+                    return tfidfDictionary.OrderByDescending(pair => pair.Value).Select(pair => pair.Key).ToList();
                 }
-                return tfidfDictionary.OrderByDescending(pair => pair.Value).Select(pair => pair.Key).ToList();
+                else
+                {
+                    return new List<string>();
+                }
             }
-            else
+            catch (Exception ex)
             {
+                Console.WriteLine($"Error searching term: {ex.Message}");
                 return new List<string>();
             }
+        }
+
+        public void PrintIndexedDocuments()
+        {
+            Console.WriteLine("The following documents are indexed:");
+            int index = 1;
+            var printedDocuments = new HashSet<string>();
+            foreach (var (word, documents) in _index)
+            {
+                foreach (var document in documents)
+                {
+                    if (!printedDocuments.Contains(document))
+                    {
+                        Console.WriteLine($"Document {index}: \"{document}\"");
+                        printedDocuments.Add(document);
+                        index++;
+                    }
+                }
+            }
+        }
+
+        private string Stem(string word)
+        {
+            // Basic stemming: Remove common word endings
+            if (word.EndsWith("es") || word.EndsWith("ed"))
+            {
+                return word.Substring(0, word.Length - 2);
+            }
+            return word;
+        }
+
+        private string RemoveStopWords(string word)
+        {
+            // Basic stop words removal
+            var stopWords = new HashSet<string> { "the", "and", "or", "in", "on", "of", "with" };
+            if (stopWords.Contains(word))
+            {
+                return "";
+            }
+            return word;
         }
     }
 }
